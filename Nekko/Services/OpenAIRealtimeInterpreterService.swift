@@ -27,7 +27,7 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
     private var currentModel = ""
     private var currentDirection: InterpreterDirection = .japaneseToEnglish
     private var currentVoiceIndex = 0
-    private var useServerVAD = false
+    private var useServerVADFallback = false
 
     private static let inputSampleRate: Double = 24_000
     private static let outputSampleRate: Double = 24_000
@@ -37,7 +37,7 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
         "gpt-realtime",
         "gpt-4o-realtime-preview",
     ]
-    private static let voiceCandidates = ["marin", "cedar", "shimmer", "alloy"]
+    private static let voiceCandidates = ["coral", "shimmer", "marin", "cedar", "alloy"]
 
     var apiKey: String {
         (UserDefaults.standard.string(forKey: "nekko_openai_api_key") ?? "")
@@ -105,6 +105,26 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
         await sendSessionUpdate(direction: direction)
     }
 
+    func prepareForNewTurn() async {
+        sendJSON(["type": "input_audio_buffer.clear"])
+
+        sendLock.lock()
+        pendingAudioData = Data()
+        sendLock.unlock()
+
+        await MainActor.run {
+            sourceTranscript = ""
+            translatedTranscript = ""
+        }
+    }
+
+    func commitTurn() async {
+        guard isConnected, !isStopping else { return }
+        sendPendingAudio()
+        sendJSON(["type": "input_audio_buffer.commit"])
+        sendJSON(["type": "response.create"])
+    }
+
     func stop() async {
         guard !isStopping else { return }
         isStopping = true
@@ -169,7 +189,7 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
         currentModel = model
         currentDirection = direction
         currentVoiceIndex = 0
-        useServerVAD = false
+        useServerVADFallback = false
 
         var components = URLComponents(string: Self.wsBaseURL)!
         components.queryItems = [
@@ -224,36 +244,32 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
         currentDirection = direction
         let voice = Self.voiceCandidates[min(currentVoiceIndex, Self.voiceCandidates.count - 1)]
 
-        let turnDetection: [String: Any]
-        if useServerVAD {
-            turnDetection = [
+        var inputConfig: [String: Any] = [
+            "format": [
+                "type": "audio/pcm",
+                "rate": Int(Self.inputSampleRate),
+            ],
+            "transcription": [
+                "model": "whisper-1",
+            ],
+        ]
+
+        if useServerVADFallback {
+            inputConfig["turn_detection"] = [
                 "type": "server_vad",
                 "threshold": NSNumber(value: 0.5),
                 "prefix_padding_ms": 150,
-                "silence_duration_ms": 250,
-            ]
-        } else {
-            turnDetection = [
-                "type": "semantic_vad",
-                "eagerness": "high",
+                "silence_duration_ms": 1500,
             ]
         }
+        // Push-to-Talk default: omit turn_detection so only commitTurn triggers response
 
         let session: [String: Any] = [
             "type": "realtime",
             "instructions": direction.instructions,
             "output_modalities": ["audio"],
             "audio": [
-                "input": [
-                    "format": [
-                        "type": "audio/pcm",
-                        "rate": Int(Self.inputSampleRate),
-                    ],
-                    "transcription": [
-                        "model": "whisper-1",
-                    ],
-                    "turn_detection": turnDetection,
-                ],
+                "input": inputConfig,
                 "output": [
                     "format": [
                         "type": "audio/pcm",
@@ -279,9 +295,8 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
             return
         }
 
-        if !useServerVAD,
-           lower.contains("semantic") || lower.contains("eagerness") || lower.contains("turn_detection") {
-            useServerVAD = true
+        if !useServerVADFallback, lower.contains("turn_detection") {
+            useServerVADFallback = true
             await sendSessionUpdate(direction: currentDirection)
         }
     }
@@ -370,8 +385,6 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
 
                 let lower = message.lowercased()
                 let canRecover = lower.contains("voice")
-                    || lower.contains("semantic")
-                    || lower.contains("eagerness")
                     || lower.contains("turn_detection")
 
                 if canRecover {

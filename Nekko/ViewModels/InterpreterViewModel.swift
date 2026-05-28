@@ -11,7 +11,8 @@ import Foundation
 @Observable
 final class InterpreterViewModel {
     var selectedDirection: InterpreterDirection = .japaneseToEnglish
-    var isInterpreting = false
+    var isSessionActive = false
+    var isHolding = false
     var permissionsGranted = false
     var audioLevels: [Float] = Array(repeating: 0, count: 48)
     var errorMessage: String?
@@ -40,25 +41,24 @@ final class InterpreterViewModel {
         realtimeService.translatedTranscript
     }
 
-    var serviceError: String? {
-        realtimeService.error
-    }
-
     var statusMessage: String {
-        if let serviceError {
+        if let serviceError = realtimeService.error {
             return serviceError
         }
         if isSpeaking {
             return selectedDirection.speakingMessage
         }
-        if isInterpreting, isConnected {
-            return selectedDirection.listeningMessage
+        if isHolding {
+            return selectedDirection.holdingMessage
         }
-        if isInterpreting {
+        if isSessionActive, isConnected {
+            return "ボタンを押して話すニャ"
+        }
+        if isSessionActive {
             return "OpenAIにつないでるニャ..."
         }
         if hasAPIKey {
-            return "話しかけてほしいニャ"
+            return "通訳を始めてから、押して話すニャ"
         }
         return "設定でOpenAI APIキーを入れてニャ"
     }
@@ -66,11 +66,11 @@ final class InterpreterViewModel {
     var helperMessage: String {
         switch selectedDirection {
         case .japaneseToEnglish:
-            "日本語で話すと、Nekkoが英語で可愛く通訳します。"
+            "押している間だけ日本語を聞き、離すと英語で通訳します。"
         case .englishToJapanese:
-            "英語の質問を聞かせると、Nekkoが日本語に戻します。"
+            "押している間だけ英語を聞き、離すと日本語で通訳します。"
         case .automatic:
-            "日本語と英語を聞き分けて、反対の言語に通訳します。"
+            "押している間だけ聞き、離すと反対の言語に通訳します。"
         }
     }
 
@@ -86,24 +86,48 @@ final class InterpreterViewModel {
         }
     }
 
-    func toggleInterpreter() {
-        if isInterpreting {
-            stopInterpreter()
+    func toggleSession() {
+        if isSessionActive {
+            endSession()
         } else {
-            startInterpreter()
+            startSession()
         }
     }
 
     func updateDirection(_ direction: InterpreterDirection) {
         selectedDirection = direction
-        guard isInterpreting else { return }
+        guard isSessionActive else { return }
 
         Task {
             await realtimeService.updateDirection(direction)
         }
     }
 
-    private func startInterpreter() {
+    func beginHold() {
+        guard isSessionActive, isConnected, !isHolding else { return }
+
+        isHolding = true
+        audioRecorder.isCapturing = true
+        audioLevels = Array(repeating: 0, count: 48)
+
+        Task {
+            await realtimeService.prepareForNewTurn()
+        }
+    }
+
+    func endHold() {
+        guard isHolding else { return }
+
+        isHolding = false
+        audioRecorder.isCapturing = false
+        audioLevels = Array(repeating: 0, count: 48)
+
+        Task {
+            await realtimeService.commitTurn()
+        }
+    }
+
+    private func startSession() {
         guard permissionsGranted else {
             errorMessage = "マイクの権限が必要です。"
             showError = true
@@ -145,11 +169,12 @@ final class InterpreterViewModel {
                         self?.realtimeService.processAudioBuffer(buffer)
                     }
 
+                    self.audioRecorder.isCapturing = false
                     _ = try self.audioRecorder.startRecording(
                         fileName: "nekko_interpreter_\(Int(Date().timeIntervalSince1970))",
                         allowsPlayback: true
                     )
-                    self.isInterpreting = true
+                    self.isSessionActive = true
                 } catch {
                     self.errorMessage = "マイクを開始できませんでした: \(error.localizedDescription)"
                     self.showError = true
@@ -158,9 +183,14 @@ final class InterpreterViewModel {
         }
     }
 
-    private func stopInterpreter() {
+    private func endSession() {
+        if isHolding {
+            endHold()
+        }
+
+        audioRecorder.isCapturing = false
         _ = audioRecorder.stopRecording()
-        isInterpreting = false
+        isSessionActive = false
         audioLevels = Array(repeating: 0, count: 48)
 
         Task {

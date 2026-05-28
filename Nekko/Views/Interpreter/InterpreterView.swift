@@ -32,7 +32,8 @@ struct InterpreterView: View {
                         directionPicker
                         waveformSection
                         transcriptSection
-                        controlButton
+                        sessionButton
+                        holdButton
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 24)
@@ -63,7 +64,7 @@ struct InterpreterView: View {
                 Circle()
                     .fill(.orange.opacity(0.18))
                     .frame(width: 196, height: 196)
-                    .scaleEffect(viewModel.isInterpreting ? (pulseCat ? 1.08 : 0.96) : 1)
+                    .scaleEffect(isCatPulsing ? (pulseCat ? 1.08 : 0.96) : 1)
 
                 Circle()
                     .stroke(.orange.opacity(0.25), lineWidth: 2)
@@ -89,7 +90,7 @@ struct InterpreterView: View {
             }
             .padding(.horizontal)
 
-            if viewModel.isInterpreting {
+            if viewModel.isSessionActive {
                 Label(
                     viewModel.isConnected ? "Live with OpenAI Realtime" : "Connecting...",
                     systemImage: viewModel.isConnected ? "dot.radiowaves.left.and.right" : "hourglass"
@@ -99,6 +100,10 @@ struct InterpreterView: View {
             }
         }
         .padding(.top, 12)
+    }
+
+    private var isCatPulsing: Bool {
+        viewModel.isHolding || viewModel.isSpeaking
     }
 
     private var directionPicker: some View {
@@ -113,6 +118,7 @@ struct InterpreterView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .disabled(viewModel.isHolding)
             .onChange(of: viewModel.selectedDirection) { _, newValue in
                 viewModel.updateDirection(newValue)
             }
@@ -125,7 +131,7 @@ struct InterpreterView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "waveform")
-                Text(viewModel.isInterpreting ? "Listening, meow..." : "Ready")
+                Text(waveformLabel)
                 Spacer()
                 Text(viewModel.selectedDirection.title)
                     .font(.caption)
@@ -138,6 +144,16 @@ struct InterpreterView: View {
         }
         .padding()
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var waveformLabel: String {
+        if viewModel.isHolding {
+            "Recording, meow..."
+        } else if viewModel.isSessionActive {
+            "Hold to speak"
+        } else {
+            "Ready"
+        }
     }
 
     private var transcriptSection: some View {
@@ -173,31 +189,80 @@ struct InterpreterView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
     }
 
-    private var controlButton: some View {
+    private var sessionButton: some View {
         Button {
             withAnimation(.spring(duration: 0.3)) {
-                viewModel.toggleInterpreter()
+                viewModel.toggleSession()
             }
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: viewModel.isInterpreting ? "stop.fill" : "mic.fill")
-                Text(viewModel.isInterpreting ? "通訳を止めるニャ" : "通訳を始めるニャ")
-                    .fontWeight(.semibold)
+            HStack(spacing: 8) {
+                Image(systemName: viewModel.isSessionActive ? "xmark.circle.fill" : "power")
+                Text(viewModel.isSessionActive ? "セッションを終了" : "通訳を始めるニャ")
+                    .fontWeight(.medium)
             }
-            .font(.title3)
-            .foregroundStyle(.white)
+            .font(.subheadline)
+            .foregroundStyle(viewModel.isSessionActive ? .red : .orange)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
+            .padding(.vertical, 12)
             .background(
-                viewModel.isInterpreting ? Color.red.gradient : Color.orange.gradient,
-                in: RoundedRectangle(cornerRadius: 22)
+                .regularMaterial,
+                in: RoundedRectangle(cornerRadius: 16)
             )
-            .shadow(color: .orange.opacity(0.25), radius: 12, y: 6)
         }
         .disabled(!viewModel.permissionsGranted)
         .opacity(viewModel.permissionsGranted ? 1 : 0.55)
-        .sensoryFeedback(.impact, trigger: viewModel.isInterpreting)
+        .sensoryFeedback(.impact, trigger: viewModel.isSessionActive)
+    }
+
+    private var holdButton: some View {
+        let isEnabled = viewModel.isSessionActive && viewModel.isConnected
+
+        return ZStack {
+            Circle()
+                .fill(holdButtonColor.gradient)
+                .frame(width: holdButtonSize, height: holdButtonSize)
+                .shadow(color: .orange.opacity(viewModel.isHolding ? 0.45 : 0.2), radius: viewModel.isHolding ? 20 : 10, y: 6)
+
+            VStack(spacing: 6) {
+                Image(systemName: viewModel.isHolding ? "waveform" : "mic.fill")
+                    .font(.system(size: 36, weight: .semibold))
+                Text(viewModel.isHolding ? "話してるニャ" : "押して話すニャ")
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
         .padding(.bottom, 16)
+        .opacity(isEnabled ? 1 : 0.4)
+        .scaleEffect(viewModel.isHolding ? 1.08 : 1)
+        .animation(.spring(duration: 0.25), value: viewModel.isHolding)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard isEnabled else { return }
+                    if !viewModel.isHolding {
+                        viewModel.beginHold()
+                    }
+                }
+                .onEnded { _ in
+                    if viewModel.isHolding {
+                        viewModel.endHold()
+                    }
+                }
+        )
+        .sensoryFeedback(.impact, trigger: viewModel.isHolding)
+    }
+
+    private var holdButtonSize: CGFloat {
+        viewModel.isHolding ? 148 : 132
+    }
+
+    private var holdButtonColor: Color {
+        if !viewModel.isSessionActive || !viewModel.isConnected {
+            return .gray
+        }
+        return viewModel.isHolding ? .red : .orange
     }
 }
 

@@ -12,6 +12,7 @@ final class AudioRecorderService {
     private var audioEngine: AVAudioEngine?
     private var audioFile: AVAudioFile?
     private(set) var isRecording = false
+    var isCapturing = false
     private var audioFileURL: URL?
     private var recordingStartTime: Date?
 
@@ -65,6 +66,8 @@ final class AudioRecorderService {
 
             let level = Self.calculateLevel(buffer: buffer)
             self.onAudioLevelUpdate?(level)
+
+            guard self.isCapturing else { return }
             self.onAudioBuffer?(buffer)
         }
 
