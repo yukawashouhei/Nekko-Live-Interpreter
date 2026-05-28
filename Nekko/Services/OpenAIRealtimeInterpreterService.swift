@@ -31,9 +31,7 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
     private static let wsBaseURL = "wss://api.openai.com/v1/realtime"
     private static let modelCandidates = [
         "gpt-realtime",
-        "gpt-realtime-2",
         "gpt-4o-realtime-preview",
-        "gpt-4o-realtime-preview-2024-12-17",
     ]
 
     var apiKey: String {
@@ -161,7 +159,6 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
 
         var request = URLRequest(url: url)
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
         request.timeoutInterval = 30
 
         let config = URLSessionConfiguration.default
@@ -202,21 +199,33 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
 
     private func sendSessionUpdate(direction: InterpreterDirection) async {
         let session: [String: Any] = [
-            "modalities": ["text", "audio"],
+            "type": "realtime",
             "instructions": direction.instructions,
-            "voice": "alloy",
-            "input_audio_format": "pcm16",
-            "output_audio_format": "pcm16",
-            "input_audio_transcription": [
-                "model": "whisper-1",
+            "output_modalities": ["audio"],
+            "audio": [
+                "input": [
+                    "format": [
+                        "type": "audio/pcm",
+                        "rate": Int(Self.inputSampleRate),
+                    ],
+                    "transcription": [
+                        "model": "whisper-1",
+                    ],
+                    "turn_detection": [
+                        "type": "server_vad",
+                        "threshold": NSNumber(value: 0.5),
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 700,
+                    ],
+                ],
+                "output": [
+                    "format": [
+                        "type": "audio/pcm",
+                        "rate": Int(Self.outputSampleRate),
+                    ],
+                    "voice": "alloy",
+                ],
             ],
-            "turn_detection": [
-                "type": "server_vad",
-                "threshold": 0.55,
-                "prefix_padding_ms": 300,
-                "silence_duration_ms": 700,
-            ],
-            "temperature": 0.8,
         ]
 
         sendJSON([
@@ -281,19 +290,21 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
                     self.sourceTranscript = transcript
                 }
 
-            case "response.audio.delta":
+            case "response.audio.delta", "response.output_audio.delta":
                 if let delta = json["delta"] as? String,
                    let audioData = Data(base64Encoded: delta) {
                     self.isSpeaking = true
                     self.audioPlayer.enqueue(audioData)
                 }
 
-            case "response.audio_transcript.delta", "response.output_text.delta":
+            case "response.audio_transcript.delta",
+                 "response.output_audio_transcript.delta",
+                 "response.output_text.delta":
                 if let delta = json["delta"] as? String {
                     self.translatedTranscript += delta
                 }
 
-            case "response.audio.done", "response.done":
+            case "response.audio.done", "response.output_audio.done", "response.done":
                 self.isSpeaking = false
 
             case "error":
