@@ -11,8 +11,8 @@ import SwiftUI
 struct MainTabView: View {
     var body: some View {
         TabView {
-            Tab("録音", systemImage: "mic.fill") {
-                RecordingView()
+            Tab("通訳", systemImage: "message.and.waveform.fill") {
+                InterpreterView()
             }
 
             Tab("記録", systemImage: "doc.text.fill") {

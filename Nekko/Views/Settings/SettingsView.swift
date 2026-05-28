@@ -8,90 +8,38 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @AppStorage("nekko_mistral_api_key") private var apiKey = ""
+    @AppStorage("nekko_openai_api_key") private var apiKey = ""
     @State private var isAPIKeyVisible = false
 
     var body: some View {
         NavigationStack {
             List {
-                usageSection
-                mistralSection
+                demoTipsSection
+                openAISection
                 aboutSection
             }
             .navigationTitle("設定")
         }
     }
 
-    // MARK: - Usage Section
+    // MARK: - Demo Tips Section
 
-    private var usageSection: some View {
+    private var demoTipsSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("今月の使用量")
-                        .font(.headline)
-                    Spacer()
-                    Text("\(UsageTracker.shared.usedMinutesThisMonth) / 600 分")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                ProgressView(value: UsageTracker.shared.usageRatio)
-                    .tint(progressColor)
-
-                HStack {
-                    Image(systemName: "clock")
-                        .foregroundStyle(.secondary)
-                    Text("残り \(UsageTracker.shared.remainingMinutes) 分")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.vertical, 4)
-
-            if UsageTracker.shared.usageRatio > 0.8 {
-                premiumBanner
-            }
+            Label("ヘッドフォン推奨", systemImage: "headphones")
+            Label("発表時は 日→英、質問時は 英→日", systemImage: "arrow.left.arrow.right")
+            Label("猫語は意味を変えない範囲で入ります", systemImage: "cat.fill")
         } header: {
-            Text("利用状況")
+            Text("デモのコツ")
         }
     }
 
-    private var progressColor: Color {
-        let ratio = UsageTracker.shared.usageRatio
-        if ratio > 0.9 { return .red }
-        if ratio > 0.7 { return .orange }
-        return .green
-    }
+    // MARK: - OpenAI API Section
 
-    private var premiumBanner: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Nekko Premium")
-                    .font(.subheadline.weight(.semibold))
-                Text("無制限に録音・文字起こし")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button("アップグレード") {
-                // Placeholder
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
-            .controlSize(.small)
-        }
-        .padding(.vertical, 4)
-    }
-
-    // MARK: - Mistral API Section
-
-    private var mistralSection: some View {
+    private var openAISection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Mistral API キー")
+                Text("OpenAI API キー")
                     .font(.subheadline)
 
                 HStack {
@@ -128,9 +76,9 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         } header: {
-            Text("Mistral AI")
+            Text("OpenAI")
         } footer: {
-            Text("すべてのMistral AI機能（リアルタイム文字起こし、バッチ文字起こし、要約、翻訳）に使用されます。Mistral AIのダッシュボードから取得できます。")
+            Text("Nekko Live Interpreter のリアルタイム音声通訳に使用されます。`sk-proj-...` と `sk-...` のどちらも利用できます。入力確認は右の目アイコンで表示切替してください。APIキーは端末内にのみ保存されます。")
         }
     }
 
@@ -148,27 +96,27 @@ struct SettingsView: View {
             HStack {
                 Text("AIモデル (リアルタイム)")
                 Spacer()
-                Text("Voxtral Mini Realtime")
+                Text("OpenAI Realtime")
                     .foregroundStyle(.secondary)
             }
 
             HStack {
-                Text("AIモデル (文字起こし)")
+                Text("モード")
                 Spacer()
-                Text("Voxtral Mini")
+                Text("Live Interpreter")
                     .foregroundStyle(.secondary)
             }
 
             HStack {
-                Text("AIモデル (要約・翻訳)")
+                Text("キャラクター")
                 Spacer()
-                Text("Mistral Small")
+                Text("Nekko")
                     .foregroundStyle(.secondary)
             }
 
-            Link(destination: URL(string: "https://mistral.ai")!) {
+            Link(destination: URL(string: "https://openai.com")!) {
                 HStack {
-                    Text("Powered by Mistral AI")
+                    Text("Powered by OpenAI")
                         .foregroundStyle(.blue)
                     Spacer()
                     Image(systemName: "arrow.up.right")

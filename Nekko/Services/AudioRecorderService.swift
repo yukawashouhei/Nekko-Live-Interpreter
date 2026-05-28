@@ -23,9 +23,17 @@ final class AudioRecorderService {
         return Date().timeIntervalSince(start)
     }
 
-    func startRecording(fileName: String) throws -> URL {
+    func startRecording(fileName: String, allowsPlayback: Bool = false) throws -> URL {
         let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
+        if allowsPlayback {
+            try audioSession.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.allowBluetooth, .defaultToSpeaker, .duckOthers]
+            )
+        } else {
+            try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
+        }
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
         let engine = AVAudioEngine()
