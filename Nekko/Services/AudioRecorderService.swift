@@ -28,9 +28,11 @@ final class AudioRecorderService {
         if allowsPlayback {
             try audioSession.setCategory(
                 .playAndRecord,
-                mode: .voiceChat,
-                options: [.allowBluetooth, .defaultToSpeaker, .duckOthers]
+                mode: .default,
+                options: [.defaultToSpeaker, .duckOthers]
             )
+            try audioSession.setPreferredIOBufferDuration(0.005)
+            try audioSession.overrideOutputAudioPort(.speaker)
         } else {
             try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
         }

@@ -23,16 +23,21 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
     private var pendingAudioData = Data()
     private let sendLock = NSLock()
     private var isStopping = false
-    private let audioPlayer = PCM16AudioPlayer(sampleRate: 24_000)
+    private let audioPlayer = PCM16AudioPlayer(sampleRate: 24_000, gain: 2.0)
     private var currentModel = ""
+    private var currentDirection: InterpreterDirection = .japaneseToEnglish
+    private var currentVoiceIndex = 0
+    private var useServerVAD = false
 
     private static let inputSampleRate: Double = 24_000
     private static let outputSampleRate: Double = 24_000
+    private static let audioChunkMs = 20
     private static let wsBaseURL = "wss://api.openai.com/v1/realtime"
     private static let modelCandidates = [
         "gpt-realtime",
         "gpt-4o-realtime-preview",
     ]
+    private static let voiceCandidates = ["marin", "cedar", "shimmer", "alloy"]
 
     var apiKey: String {
         (UserDefaults.standard.string(forKey: "nekko_openai_api_key") ?? "")
@@ -62,6 +67,7 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
         }
 
         do {
+            try configurePlaybackAudioSession()
             try audioPlayer.start()
 
             var lastErrorMessage = "接続に失敗しました。"
@@ -109,7 +115,7 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
             sendJSON(["type": "response.create"])
         }
 
-        try? await Task.sleep(for: .milliseconds(300))
+        try? await Task.sleep(for: .milliseconds(100))
 
         receiveTask?.cancel()
         webSocketTask?.cancel(with: .goingAway, reason: nil)
@@ -132,7 +138,7 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
         sendLock.lock()
         pendingAudioData.append(pcmData)
 
-        let chunkSize = Int(Self.inputSampleRate) * 2 * 100 / 1000
+        let chunkSize = Int(Self.inputSampleRate) * 2 * Self.audioChunkMs / 1000
         while pendingAudioData.count >= chunkSize {
             let chunk = pendingAudioData.prefix(chunkSize)
             pendingAudioData = Data(pendingAudioData.dropFirst(chunkSize))
@@ -143,10 +149,27 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
         sendLock.unlock()
     }
 
+    // MARK: - Audio Session
+
+    private func configurePlaybackAudioSession() throws {
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(
+            .playAndRecord,
+            mode: .default,
+            options: [.defaultToSpeaker, .duckOthers]
+        )
+        try audioSession.setPreferredIOBufferDuration(0.005)
+        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        try audioSession.overrideOutputAudioPort(.speaker)
+    }
+
     // MARK: - WebSocket
 
     private func connectWebSocket(direction: InterpreterDirection, model: String) async throws {
         currentModel = model
+        currentDirection = direction
+        currentVoiceIndex = 0
+        useServerVAD = false
 
         var components = URLComponents(string: Self.wsBaseURL)!
         components.queryItems = [
@@ -191,13 +214,31 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
                 let closeMessage = formattedCloseMessage(for: task)
                 throw NSError(domain: "OpenAIRealtime", code: -1, userInfo: [NSLocalizedDescriptionKey: closeMessage])
             }
-            try await Task.sleep(for: .milliseconds(100))
+            try await Task.sleep(for: .milliseconds(50))
         }
 
         throw NSError(domain: "OpenAIRealtime", code: -1, userInfo: [NSLocalizedDescriptionKey: "セッション作成がタイムアウトしました"])
     }
 
     private func sendSessionUpdate(direction: InterpreterDirection) async {
+        currentDirection = direction
+        let voice = Self.voiceCandidates[min(currentVoiceIndex, Self.voiceCandidates.count - 1)]
+
+        let turnDetection: [String: Any]
+        if useServerVAD {
+            turnDetection = [
+                "type": "server_vad",
+                "threshold": NSNumber(value: 0.5),
+                "prefix_padding_ms": 150,
+                "silence_duration_ms": 250,
+            ]
+        } else {
+            turnDetection = [
+                "type": "semantic_vad",
+                "eagerness": "high",
+            ]
+        }
+
         let session: [String: Any] = [
             "type": "realtime",
             "instructions": direction.instructions,
@@ -211,19 +252,14 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
                     "transcription": [
                         "model": "whisper-1",
                     ],
-                    "turn_detection": [
-                        "type": "server_vad",
-                        "threshold": NSNumber(value: 0.5),
-                        "prefix_padding_ms": 300,
-                        "silence_duration_ms": 700,
-                    ],
+                    "turn_detection": turnDetection,
                 ],
                 "output": [
                     "format": [
                         "type": "audio/pcm",
                         "rate": Int(Self.outputSampleRate),
                     ],
-                    "voice": "alloy",
+                    "voice": voice,
                 ],
             ],
         ]
@@ -232,6 +268,22 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
             "type": "session.update",
             "session": session,
         ])
+    }
+
+    private func handleSessionError(_ message: String) async {
+        let lower = message.lowercased()
+
+        if lower.contains("voice"), currentVoiceIndex + 1 < Self.voiceCandidates.count {
+            currentVoiceIndex += 1
+            await sendSessionUpdate(direction: currentDirection)
+            return
+        }
+
+        if !useServerVAD,
+           lower.contains("semantic") || lower.contains("eagerness") || lower.contains("turn_detection") {
+            useServerVAD = true
+            await sendSessionUpdate(direction: currentDirection)
+        }
     }
 
     private func receiveLoop() async {
@@ -315,8 +367,19 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
                 } else {
                     message = "OpenAI Realtime APIエラーが発生しました"
                 }
-                self.error = message
-                self.isConnected = false
+
+                let lower = message.lowercased()
+                let canRecover = lower.contains("voice")
+                    || lower.contains("semantic")
+                    || lower.contains("eagerness")
+                    || lower.contains("turn_detection")
+
+                if canRecover {
+                    await self.handleSessionError(message)
+                } else {
+                    self.error = message
+                    self.isConnected = false
+                }
 
             default:
                 print("[OpenAIRealtime] Event: \(type)")
@@ -473,10 +536,12 @@ private final class PCM16AudioPlayer: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let format: AVAudioFormat
+    private let gain: Float
     private let lock = NSLock()
     private var isStarted = false
 
-    init(sampleRate: Double) {
+    init(sampleRate: Double, gain: Float = 1.0) {
+        self.gain = gain
         format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: sampleRate,
@@ -494,6 +559,8 @@ private final class PCM16AudioPlayer: @unchecked Sendable {
         if !engine.isRunning {
             try engine.start()
         }
+        engine.mainMixerNode.outputVolume = 1.0
+        player.volume = 1.0
         if !player.isPlaying {
             player.play()
         }
@@ -534,7 +601,8 @@ private final class PCM16AudioPlayer: @unchecked Sendable {
         data.withUnsafeBytes { rawBuffer in
             let samples = rawBuffer.bindMemory(to: Int16.self)
             for index in 0..<sampleCount {
-                channel[index] = Float(samples[index]) / Float(Int16.max)
+                let normalized = Float(samples[index]) / Float(Int16.max) * gain
+                channel[index] = min(1.0, max(-1.0, normalized))
             }
         }
 
