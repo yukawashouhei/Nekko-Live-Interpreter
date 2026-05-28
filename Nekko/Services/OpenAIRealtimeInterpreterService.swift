@@ -389,9 +389,11 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
 
                 if canRecover {
                     await self.handleSessionError(message)
-                } else {
+                } else if Self.isFatalRealtimeError(message) {
                     self.error = message
                     self.isConnected = false
+                } else {
+                    self.error = message
                 }
 
             default:
@@ -523,12 +525,18 @@ final class OpenAIRealtimeInterpreterService: @unchecked Sendable {
     }
 
     private func shouldStopRetrying(for message: String) -> Bool {
+        Self.isFatalRealtimeError(message)
+    }
+
+    private static func isFatalRealtimeError(_ message: String) -> Bool {
         let lower = message.lowercased()
         return lower.contains("invalid_api_key")
             || lower.contains("authentication")
             || lower.contains("unauthorized")
             || lower.contains("incorrect api key")
             || lower.contains("permission")
+            || lower.contains("billing")
+            || lower.contains("quota")
     }
 
     private func formattedCloseMessage(for task: URLSessionWebSocketTask) -> String {

@@ -10,16 +10,15 @@ import Foundation
 
 @Observable
 final class InterpreterViewModel {
-    var selectedDirection: InterpreterDirection = .japaneseToEnglish
     var isSessionActive = false
     var isHolding = false
     var permissionsGranted = false
-    var audioLevels: [Float] = Array(repeating: 0, count: 48)
     var errorMessage: String?
     var showError = false
 
     private var audioRecorder = AudioRecorderService()
     private let realtimeService = OpenAIRealtimeInterpreterService()
+    private var isStarting = false
 
     var hasAPIKey: Bool {
         realtimeService.hasAPIKey
@@ -33,45 +32,28 @@ final class InterpreterViewModel {
         realtimeService.isSpeaking
     }
 
-    var sourceTranscript: String {
-        realtimeService.sourceTranscript
+    var hasError: Bool {
+        realtimeService.error != nil
     }
 
-    var translatedTranscript: String {
-        realtimeService.translatedTranscript
-    }
-
-    var statusMessage: String {
+    /// 接続中・エラー時のみ表示（通常は nil）
+    var statusLine: String? {
         if let serviceError = realtimeService.error {
             return serviceError
         }
         if isSpeaking {
-            return selectedDirection.speakingMessage
+            return "通訳してるニャ..."
         }
         if isHolding {
-            return selectedDirection.holdingMessage
+            return "聞いてるニャ..."
         }
-        if isSessionActive, isConnected {
-            return "ボタンを押して話すニャ"
+        if isSessionActive, !isConnected {
+            return "つないでるニャ..."
         }
-        if isSessionActive {
-            return "OpenAIにつないでるニャ..."
+        if !hasAPIKey {
+            return "設定でOpenAI APIキーを入れてニャ"
         }
-        if hasAPIKey {
-            return "通訳を始めてから、押して話すニャ"
-        }
-        return "設定でOpenAI APIキーを入れてニャ"
-    }
-
-    var helperMessage: String {
-        switch selectedDirection {
-        case .japaneseToEnglish:
-            "押している間だけ日本語を聞き、離すと英語で通訳します。"
-        case .englishToJapanese:
-            "押している間だけ英語を聞き、離すと日本語で通訳します。"
-        case .automatic:
-            "押している間だけ聞き、離すと反対の言語に通訳します。"
-        }
+        return nil
     }
 
     func checkPermissions() async {
@@ -86,29 +68,73 @@ final class InterpreterViewModel {
         }
     }
 
-    func toggleSession() {
-        if isSessionActive {
-            endSession()
-        } else {
-            startSession()
+    func start() async {
+        guard !isStarting, !isSessionActive else { return }
+        guard permissionsGranted else { return }
+
+        guard realtimeService.hasAPIKey else {
+            await MainActor.run {
+                errorMessage = "OpenAI APIキーが設定されていません。設定タブから入力してください。"
+                showError = true
+            }
+            return
+        }
+
+        isStarting = true
+        defer { isStarting = false }
+
+        await MainActor.run {
+            isSessionActive = true
+        }
+
+        await realtimeService.start(direction: .automatic)
+
+        if let realtimeError = realtimeService.error {
+            await MainActor.run {
+                isSessionActive = false
+                errorMessage = realtimeError
+                showError = true
+            }
+            return
+        }
+
+        await MainActor.run {
+            do {
+                audioRecorder.onAudioBuffer = { [weak self] buffer in
+                    self?.realtimeService.processAudioBuffer(buffer)
+                }
+
+                audioRecorder.isCapturing = false
+                _ = try audioRecorder.startRecording(
+                    fileName: "nekko_interpreter_\(Int(Date().timeIntervalSince1970))",
+                    allowsPlayback: true
+                )
+            } catch {
+                isSessionActive = false
+                errorMessage = "マイクを開始できませんでした: \(error.localizedDescription)"
+                showError = true
+            }
         }
     }
 
-    func updateDirection(_ direction: InterpreterDirection) {
-        selectedDirection = direction
-        guard isSessionActive else { return }
+    func stop() {
+        isHolding = false
+        audioRecorder.isCapturing = false
+        _ = audioRecorder.stopRecording()
+        isSessionActive = false
 
         Task {
-            await realtimeService.updateDirection(direction)
+            await realtimeService.stop()
         }
     }
 
     func beginHold() {
-        guard isSessionActive, isConnected, !isHolding else { return }
+        guard isSessionActive, !isHolding else { return }
 
         isHolding = true
         audioRecorder.isCapturing = true
-        audioLevels = Array(repeating: 0, count: 48)
+
+        guard isConnected else { return }
 
         Task {
             await realtimeService.prepareForNewTurn()
@@ -120,81 +146,11 @@ final class InterpreterViewModel {
 
         isHolding = false
         audioRecorder.isCapturing = false
-        audioLevels = Array(repeating: 0, count: 48)
+
+        guard isSessionActive else { return }
 
         Task {
             await realtimeService.commitTurn()
-        }
-    }
-
-    private func startSession() {
-        guard permissionsGranted else {
-            errorMessage = "マイクの権限が必要です。"
-            showError = true
-            return
-        }
-
-        guard realtimeService.hasAPIKey else {
-            errorMessage = "OpenAI APIキーが設定されていません。設定タブから入力してください。"
-            showError = true
-            return
-        }
-
-        audioLevels = Array(repeating: 0, count: 48)
-
-        Task {
-            await realtimeService.start(direction: selectedDirection)
-
-            if let realtimeError = realtimeService.error {
-                await MainActor.run {
-                    errorMessage = realtimeError
-                    showError = true
-                }
-                return
-            }
-
-            await MainActor.run {
-                do {
-                    self.audioRecorder.onAudioLevelUpdate = { [weak self] level in
-                        Task { @MainActor [weak self] in
-                            guard let self else { return }
-                            self.audioLevels.append(level)
-                            if self.audioLevels.count > 48 {
-                                self.audioLevels.removeFirst()
-                            }
-                        }
-                    }
-
-                    self.audioRecorder.onAudioBuffer = { [weak self] buffer in
-                        self?.realtimeService.processAudioBuffer(buffer)
-                    }
-
-                    self.audioRecorder.isCapturing = false
-                    _ = try self.audioRecorder.startRecording(
-                        fileName: "nekko_interpreter_\(Int(Date().timeIntervalSince1970))",
-                        allowsPlayback: true
-                    )
-                    self.isSessionActive = true
-                } catch {
-                    self.errorMessage = "マイクを開始できませんでした: \(error.localizedDescription)"
-                    self.showError = true
-                }
-            }
-        }
-    }
-
-    private func endSession() {
-        if isHolding {
-            endHold()
-        }
-
-        audioRecorder.isCapturing = false
-        _ = audioRecorder.stopRecording()
-        isSessionActive = false
-        audioLevels = Array(repeating: 0, count: 48)
-
-        Task {
-            await realtimeService.stop()
         }
     }
 }
