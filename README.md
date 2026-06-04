@@ -1,5 +1,7 @@
 # Nekko Live Interpreter
 
+Built for **OpenAI Voice Hack Night 2026**.
+
 An iOS app that turns your iPhone into a **real-time, voice-to-voice interpreter** between Japanese and English, powered entirely by the **OpenAI Realtime API**. Hold a button, speak, and a cute pixel-art cat named **Nekko** speaks the translation back to you the moment you release.
 
 ## Why it feels instant
@@ -72,7 +74,6 @@ iOS App (Nekko)
 | AVAudioConverter | Resampling to 24 kHz mono PCM16 |
 | URLSessionWebSocketTask | OpenAI Realtime connection |
 | OpenAI Realtime API (`gpt-realtime`) | Live speech-to-speech interpretation |
-| SwiftData | Local persistence for the legacy Records tab |
 | WidgetKit | Home screen pixel-art cat widget |
 
 ## Setup
@@ -96,10 +97,6 @@ The key is stored locally on the device (UserDefaults) and is used only for the 
 2. Open the **Interpreter** tab — it auto-connects to OpenAI.
 3. **Press and hold** the big button while you speak.
 4. **Release** — Nekko speaks the translation in the other language.
-
-## Project background
-
-Nekko started as a Mistral-based meeting recorder (recording, transcription, summarization). For the **OpenAI Voice Hack Night**, the interpreter experience was rebuilt on top of the OpenAI Realtime API (`gpt-realtime`) as a voice-to-voice, push-to-talk interpreter with a cat persona.
 
 ## Supported translation
 

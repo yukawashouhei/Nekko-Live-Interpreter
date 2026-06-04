@@ -1,6 +1,6 @@
 //
 //  NekkoApp.swift
-//  Nekko
+//  Nekko Live Interpreter — OpenAI Voice Hack Night 2026
 //
 //  Created by 湯川昇平 on 2026/02/28.
 //

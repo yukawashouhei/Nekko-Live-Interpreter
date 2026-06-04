@@ -2,6 +2,8 @@
 
 > [English](./README.md)
 
+**OpenAI Voice Hack Night 2026** 向けに作成した iOS アプリです。
+
 **OpenAI Realtime API** を活用した、猫のNekkoが日本語と英語を音声対音声で通訳してくれる iOS アプリ。ボタンを押している間だけ話し、離した瞬間にNekkoが可愛い猫らしい声でもう一方の言語へ通訳します。
 
 ## なぜ速いのか
@@ -74,7 +76,6 @@ iOS App (Nekko)
 | AVAudioConverter | 24kHz mono PCM16 へのリサンプリング |
 | URLSessionWebSocketTask | OpenAI Realtime 接続 |
 | OpenAI Realtime API (`gpt-realtime`) | ライブ音声通訳 |
-| SwiftData | 記録タブ（レガシー）のローカル永続化 |
 | WidgetKit | ホーム画面のドット絵猫ウィジェット |
 
 ## セットアップ
