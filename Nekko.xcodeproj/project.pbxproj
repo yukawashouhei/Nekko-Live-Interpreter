@@ -1,4 +1,5 @@
 // !$*UTF8*$!
+// Nekko Live Interpreter — OpenAI Realtime voice-to-voice iOS app
 {
 	archiveVersion = 1;
 	classes = {

@@ -4,8 +4,8 @@
 //
 //  Created by 湯川昇平 on 2026/02/28.
 //
-//  NOTE: This file requires a Widget Extension target in Xcode.
-//  To set up: File > New > Target > Widget Extension > Name: "NekkoWidget"
+//  Nekko Live Interpreter — optional home-screen widget (pixel-art cat).
+//  Setup: File > New > Target > Widget Extension > Name: "NekkoWidget"
 //  Then replace the generated files with this code.
 //
 

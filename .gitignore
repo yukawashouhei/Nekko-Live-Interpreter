@@ -1,3 +1,5 @@
+# Nekko Live Interpreter (OpenAI Realtime API, iOS)
+
 # Xcode
 build/
 DerivedData/
@@ -21,10 +23,6 @@ xcuserdata/
 .build/
 .swiftpm/
 Package.resolved
-
-# Vapor / Backend
-NekkoBackend/.build/
-NekkoBackend/.swiftpm/
 
 # Environment and secrets
 .env
