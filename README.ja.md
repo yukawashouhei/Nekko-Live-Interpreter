@@ -1,6 +1,6 @@
 # Nekko Live Interpreter
 
-> [English](./README.md) | [Français](./README.fr.md)
+> [English](./README.md)
 
 **OpenAI Realtime API** を活用した、猫のNekkoが日本語と英語を音声対音声で通訳してくれる iOS アプリ。ボタンを押している間だけ話し、離した瞬間にNekkoが可愛い猫らしい声でもう一方の言語へ通訳します。
 

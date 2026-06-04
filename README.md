@@ -1,7 +1,5 @@
 # Nekko Live Interpreter
 
-> [日本語](./README.ja.md) | [Français](./README.fr.md)
-
 An iOS app that turns your iPhone into a **real-time, voice-to-voice interpreter** between Japanese and English, powered entirely by the **OpenAI Realtime API**. Hold a button, speak, and a cute pixel-art cat named **Nekko** speaks the translation back to you the moment you release.
 
 ## Why it feels instant
