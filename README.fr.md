@@ -1,56 +1,81 @@
-# Nekko (CatScript)
+# Nekko Live Interpreter
 
 > [English](./README.md) | [日本語](./README.ja.md)
 
-Une application iOS d'enregistrement, de transcription, de synthèse et de traduction vocale, entièrement propulsée par **Mistral AI**. Un chat en pixel art vous accueille à chaque ouverture de l'application.
+Une application iOS qui transforme votre iPhone en **interprète vocal en temps réel** entre le japonais et l'anglais, propulsée entièrement par l'**API Realtime d'OpenAI**. Maintenez un bouton, parlez, et un mignon chat en pixel art nommé **Nekko** vous restitue la traduction dès que vous relâchez.
 
-## Fonctionnalités
+## Pourquoi c'est instantané
 
-- **Enregistrement** — Capture audio de haute qualité (M4A) via le microphone de l'appareil.
-- **Transcription en temps réel** — Sous-titres en direct diffusés pendant l'enregistrement via l'API WebSocket Realtime de Mistral.
-- **Transcription par lots avec identification des locuteurs** — Après l'enregistrement, l'audio est transcrit avec des étiquettes de locuteurs (Speaker 1, 2...) grâce à l'API batch Voxtral Mini.
-- **Synthèse** — Génère un résumé concis de la transcription avec Mistral Small.
-- **Traduction** — Traduit la transcription dans la langue choisie avec Mistral Small.
-- **Suivi d'utilisation** — Affiche l'utilisation mensuelle avec une limite de 600 minutes.
-- **Widget** — Un widget chat en pixel art pour l'écran d'accueil.
+La plupart des applications d'interprétation enchaînent trois modèles (reconnaissance vocale → traduction LLM → synthèse vocale). Nekko utilise un seul modèle **voix-à-voix** sur une connexion persistante, sans aller-retour textuel intermédiaire :
 
-## Utilisation de Mistral AI
+- **Un seul modèle voix-à-voix** (`gpt-realtime`) — audio en entrée, audio en sortie, sans étapes STT/TTS intermédiaires.
+- **WebSocket persistant** — la connexion est ouverte une seule fois à l'ouverture de l'onglet, sans surcoût de connexion par requête.
+- **Diffusion par fragments de 20 ms** — pendant que vous maintenez le bouton, l'audio est envoyé par fragments de 20 ms ; au moment où vous relâchez, le serveur possède déjà presque toute votre parole.
+- **Lecture incrémentale** — l'audio traduit est joué à mesure que chaque `response.output_audio.delta` arrive, sans attendre la fin de la réponse.
+- **Push-to-Talk** — relâcher le bouton valide manuellement le tour de parole, donc le modèle n'attend jamais de détecter un silence avant de répondre.
 
-| Fonctionnalité | Modèle | API |
-|----------------|--------|-----|
-| Transcription en temps réel | `voxtral-mini-transcribe-realtime-2602` | WebSocket `wss://api.mistral.ai/v1/audio/transcriptions/realtime` |
-| Transcription par lots (identification des locuteurs) | `voxtral-mini-latest` | `POST /v1/audio/transcriptions` avec `diarize=true` |
-| Synthèse | `mistral-small-latest` | `POST /v1/chat/completions` |
-| Traduction | `mistral-small-latest` | `POST /v1/chat/completions` |
+## Fonctionnement
 
-Tous les appels API sont effectués **directement depuis l'application iOS** vers `api.mistral.ai`. Aucun serveur backend n'est nécessaire.
+```mermaid
+flowchart TD
+    onAppear[Ouvrir l'onglet Interprète] --> connect[Connexion auto WebSocket, direction = automatique]
+    connect --> wait[Micro actif, capture OFF]
+    wait -->|appuyer et maintenir| capture["isCapturing = ON : flux PCM16 24kHz par fragments de 20ms"]
+    capture -->|relâcher| commit["commitTurn : input_audio_buffer.commit + response.create"]
+    commit --> play[Lecture incrémentale de l'audio traduit]
+    play --> wait
+    onDisappear[Quitter l'onglet] --> stop[Déconnexion WebSocket et arrêt du micro]
+```
+
+## Utilisation d'OpenAI
+
+| Aspect | Détail |
+|--------|--------|
+| API | API Realtime d'OpenAI via WebSocket |
+| Endpoint | `wss://api.openai.com/v1/realtime` |
+| Modèle | `gpt-realtime` (repli `gpt-4o-realtime-preview`) |
+| Voix | `coral` (repli auto : `shimmer` → `marin` → `cedar` → `alloy`) |
+| Entrée audio | PCM16 mono 24 kHz, envoyé par fragments de 20 ms via `input_audio_buffer.append` |
+| Sortie audio | PCM16 mono 24 kHz, lue de façon incrémentale depuis `response.output_audio.delta` |
+| Transcription d'entrée | `whisper-1` |
+| Forme de session | Forme GA : `type: "realtime"`, `output_modalities: ["audio"]`, `audio.input/output` |
+| Gestion des tours | Push-to-Talk : `turn_detection` omis ; `input_audio_buffer.commit` + `response.create` manuels au relâchement |
+
+Tous les appels API sont effectués **directement depuis l'application iOS** vers `api.openai.com`. Aucun serveur backend n'est nécessaire.
+
+## Conception Push-to-Talk
+
+L'application est optimisée pour les environnements bruyants de démo et de questions-réponses :
+
+- **Tours manuels** — par défaut, `turn_detection` est omis de la session. L'audio n'est capturé que pendant que le bouton est maintenu, et le tour est validé dès le relâchement. Cela évite de capter les conversations ambiantes et supprime toute attente de détection de silence côté serveur. Si un modèle rejette la forme sans `turn_detection`, l'application bascule automatiquement sur `server_vad` (silence de 1500 ms).
+- **Invite « traducteur uniquement »** — les instructions système imposent un traducteur strict à sens unique. Même des phrases comme « traduis ceci » ou « tu m'entends ? » sont traduites littéralement au lieu d'être traitées comme une conversation.
+- **Personnalité de chat** — l'invite demande une voix enjouée, enfantine et légèrement plus aiguë, avec une touche féline (un doux `ニャ` / `meow`) sans changer le sens.
 
 ## Architecture
 
 ```
 iOS App (Nekko)
-    ├── Pendant l'enregistrement : WebSocket → Mistral Realtime (voxtral-mini-transcribe-realtime-2602)
-    ├── Après l'enregistrement : POST /v1/audio/transcriptions (voxtral-mini-latest, diarize=true)
-    ├── Synthèse et traduction : POST /v1/chat/completions (mistral-small-latest)
-    └── Données : SwiftData (local) / UserDefaults (clé API)
+    ├── À l'ouverture de l'onglet : connexion auto WebSocket → OpenAI Realtime (gpt-realtime)
+    ├── Capture micro : AVAudioEngine → PCM16 mono 24kHz (S16LE), fragments de 20ms
+    ├── Maintenir pour parler : flux audio ; relâcher → commit + response.create
+    ├── Lecture : response.output_audio.delta → AVAudioEngine (incrémentale)
+    └── Données : UserDefaults (clé API)
 ```
 
-- **Transcription en temps réel** : L'audio est converti en PCM mono 16 kHz (S16LE) et envoyé par fragments de 480 ms via WebSocket.
-- **Transcription par lots, synthèse et traduction** : Appels HTTPS standard directement vers l'API REST de Mistral.
-- **Persistance** : Les enregistrements et transcriptions sont stockés localement avec SwiftData.
+- **La direction** est fixée sur `automatique` : le japonais est traduit en anglais, l'anglais en japonais.
+- **Sans backend** : l'application communique directement avec l'API Realtime d'OpenAI.
 
 ## Stack technique
 
 | Technologie | Utilisation |
 |-------------|-------------|
 | SwiftUI | Interface utilisateur |
-| SwiftData | Persistance des données |
-| AVAudioEngine | Enregistrement audio |
-| URLSessionWebSocketTask | Transcription en temps réel Mistral |
-| Mistral Voxtral Mini Realtime | Transcription en direct pendant l'enregistrement |
-| Mistral Voxtral Mini | Transcription par lots avec identification des locuteurs |
-| Mistral Small | Synthèse et traduction |
-| WidgetKit | Widget pour l'écran d'accueil |
+| AVAudioEngine | Capture micro et lecture audio |
+| AVAudioConverter | Rééchantillonnage en PCM16 mono 24 kHz |
+| URLSessionWebSocketTask | Connexion OpenAI Realtime |
+| API Realtime d'OpenAI (`gpt-realtime`) | Interprétation voix-à-voix en direct |
+| SwiftData | Persistance locale pour l'onglet Enregistrements (hérité) |
+| WidgetKit | Widget chat en pixel art |
 
 ## Installation
 
@@ -60,33 +85,28 @@ iOS App (Nekko)
 2. Configurer votre équipe dans Signing & Capabilities.
 3. Exécuter sur un iPhone (appareil ou simulateur).
 
-### 2. Clé API Mistral
+### 2. Clé API OpenAI
 
-1. Obtenir une clé API sur [Mistral AI](https://mistral.ai).
-2. Dans l'application, aller dans l'onglet **Réglages** → **Mistral AI** → saisir votre **clé API Mistral**.
+1. Obtenir une clé API sur [OpenAI Platform](https://platform.openai.com).
+2. Dans l'application, ouvrir l'onglet **Réglages** → **OpenAI** → saisir votre **clé API OpenAI**.
 
-La clé est stockée localement sur l'appareil (UserDefaults) et est utilisée pour toutes les fonctionnalités : transcription en temps réel, transcription par lots, synthèse et traduction.
+La clé est stockée localement sur l'appareil (UserDefaults) et n'est utilisée que pour l'interprète en direct.
 
-### 3. Widget (optionnel)
+## Conseils pour la démo
 
-1. Dans Xcode, aller dans File → New → Target → Widget Extension.
-2. Nommer `NekkoWidget`.
-3. Remplacer les fichiers générés par ceux du répertoire `NekkoWidget/`.
+1. Utilisez un casque pour éviter une boucle d'interprétation (le micro captant la sortie haut-parleur).
+2. Ouvrez l'onglet **Interprète** — il se connecte automatiquement à OpenAI.
+3. **Maintenez** le grand bouton pendant que vous parlez.
+4. **Relâchez** — Nekko prononce la traduction dans l'autre langue.
 
-### 4. Backend (optionnel)
+## Contexte du projet
 
-Le dépôt inclut `NekkoBackend` (Vapor), mais **l'application n'en a pas besoin**. Il peut être utilisé comme proxy optionnel ou pour la journalisation.
+Nekko a débuté comme un enregistreur de réunions basé sur Mistral (enregistrement, transcription, synthèse). Pour l'**OpenAI Voice Hack Night**, l'expérience d'interprétation a été reconstruite sur l'API Realtime d'OpenAI (`gpt-realtime`) sous forme d'interprète voix-à-voix en push-to-talk avec une personnalité de chat.
 
-```bash
-cd NekkoBackend
-export MISTRAL_API_KEY=your_key_here
-swift run
-```
+## Traduction prise en charge
 
-## Langues prises en charge
-
-Japonais, English, Français, العربية, Deutsch, Español, हिन्दी, Italiano, 한국어, Nederlands, Português, Русский, 中文
+Japonais ↔ Anglais (détection automatique de la direction).
 
 ## Licence
 
-Hackathon Project — Mistral AI Worldwide Hackathon 2026
+Hackathon Project — OpenAI Voice Hack Night 2026
